@@ -20,7 +20,6 @@ export interface UpscalerResult {
 export class UpscalerService {
   private worker: Worker | null = null;
   private currentJobId: string | null = null;
-  private abortController: AbortController | null = null;
 
   private ensureWorker(): Worker {
     if (!this.worker) {

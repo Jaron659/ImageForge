@@ -2,8 +2,7 @@
    ImageForge — Design System & Global Styles
    ============================================================ */
 
-/* ── Fonts ─────────────────────────────────────────────────── */
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+/* ── Fonts loaded via non-blocking <link> in index.html ──── */
 
 /* ── CSS Custom Properties (Design Tokens) ────────────────── */
 :root {

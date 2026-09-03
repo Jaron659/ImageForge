@@ -21,7 +21,7 @@ const Header: React.FC<HeaderProps> = ({ batchCount = 0 }) => {
                 </linearGradient>
               </defs>
             </svg>
-            <span className="header-title">ImageForge</span>
+            <h1 className="header-title">ImageForge</h1>
           </div>
           <span className="header-tagline">Client-side image compression &amp; AI upscaling</span>
         </div>

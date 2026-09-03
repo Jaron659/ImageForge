@@ -79,46 +79,49 @@ export class ImageCompressorService {
     targetBytes: number,
     onStep?: (iteration: number, quality: number, sizeBytes: number) => void
   ): Promise<{ quality: number; blob: Blob }> {
-    let lo = 0.01;
-    let hi = 1.0;
-    let bestQuality = lo;
-    let bestBlob: Blob = await canvasToBlob(canvas, format, lo);
+    const lo = 0.01;
+    const hi = 1.0;
 
-    // Quick check: even at maximum quality, we're within target
-    const maxBlob = await canvasToBlob(canvas, format, 1.0);
+    // Quick check 1: even at maximum quality, we're within target — no search needed
+    const maxBlob = await canvasToBlob(canvas, format, hi);
     if (maxBlob.size <= targetBytes) {
-      onStep?.(0, 1.0, maxBlob.size);
-      return { quality: 1.0, blob: maxBlob };
+      onStep?.(0, hi, maxBlob.size);
+      return { quality: hi, blob: maxBlob };
     }
 
-    // Quick check: even at minimum quality, we exceed target
+    // Quick check 2: even at minimum quality, we still exceed target — best-effort
     const minBlob = await canvasToBlob(canvas, format, lo);
     if (minBlob.size > targetBytes) {
       onStep?.(0, lo, minBlob.size);
-      // Return the minimum quality as a best-effort result
       return { quality: lo, blob: minBlob };
     }
 
+    // Binary search in (lo, hi) — guaranteed: minBlob fits not, maxBlob fits not → solution exists
+    let searchLo = lo;
+    let searchHi = hi;
+    let bestQuality = lo;
+    let bestBlob = minBlob;
+
     for (let i = 0; i < BINARY_SEARCH_MAX_ITERATIONS; i++) {
-      const mid = (lo + hi) / 2;
+      const mid = (searchLo + searchHi) / 2;
       const blob = await canvasToBlob(canvas, format, mid);
       onStep?.(i + 1, mid, blob.size);
 
       if (blob.size <= targetBytes) {
-        // This quality fits — try to go higher
+        // This quality fits — record it and try to go higher
         bestQuality = mid;
         bestBlob = blob;
-        lo = mid;
+        searchLo = mid;
 
         if (Math.abs(targetBytes - blob.size) <= BINARY_SEARCH_TOLERANCE_BYTES) {
-          break; // close enough
+          break; // within tolerance — done
         }
       } else {
         // Too large — go lower
-        hi = mid;
+        searchHi = mid;
       }
 
-      if (hi - lo < 0.005) break; // converged
+      if (searchHi - searchLo < 0.005) break; // converged
     }
 
     return { quality: bestQuality, blob: bestBlob };

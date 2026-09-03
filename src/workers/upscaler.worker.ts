@@ -48,7 +48,6 @@ async function getSession(modelUrl: string): Promise<ort.InferenceSession> {
 
   sessionLoadPromise = (async () => {
     const providers = await selectExecutionProviders();
-
     postProgress(activeJobId ?? '', 5, `Loading AI model (${providers[0]} backend)...`);
 
     try {
@@ -60,12 +59,34 @@ async function getSession(modelUrl: string): Promise<ort.InferenceSession> {
       sessionModelUrl = modelUrl;
       sessionLoadPromise = null;
       return session;
-    } catch (err) {
+    } catch (primaryErr) {
+      // If WebGPU failed, fallback to WASM
+      if (providers.includes('webgpu')) {
+        try {
+          postProgress(activeJobId ?? '', 7, 'WebGPU failed, falling back to CPU (WASM)...');
+          const wasmSession = await ort.InferenceSession.create(modelUrl, {
+            executionProviders: ['wasm'],
+            graphOptimizationLevel: 'all',
+          });
+          cachedSession = wasmSession;
+          sessionModelUrl = modelUrl;
+          sessionLoadPromise = null;
+          return wasmSession;
+        } catch (wasmErr) {
+          sessionLoadPromise = null;
+          cachedSession = null;
+          throw new Error(
+            `Failed to load AI model from "${modelUrl}" via WASM fallback: ${(wasmErr as Error).message}`
+          );
+        }
+      }
+
       sessionLoadPromise = null;
+      cachedSession = null;
       throw new Error(
         `Failed to load AI model from "${modelUrl}". ` +
         `Ensure the file public/models/realesr-general-x4v3.onnx exists and is valid. ` +
-        `Original error: ${(err as Error).message}`
+        `Original error: ${(primaryErr as Error).message}`
       );
     }
   })();
@@ -75,7 +96,7 @@ async function getSession(modelUrl: string): Promise<ort.InferenceSession> {
 
 // ─── Execution provider selection ───────────────────────────────────────────
 async function selectExecutionProviders(): Promise<string[]> {
-  // Try WebGPU first
+  // Try WebGPU first if supported
   if (typeof navigator !== 'undefined' && 'gpu' in navigator) {
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -153,6 +174,7 @@ async function runEnhancement(request: WorkerEnhanceRequest): Promise<void> {
       postProgress(id, 40, 'AI inference running — this may take a moment...');
       results = await session.run(feeds);
     } catch (err) {
+      cachedSession = null;
       const errMsg = (err as Error).message;
       // Check for OOM
       if (errMsg.toLowerCase().includes('out of memory') || errMsg.toLowerCase().includes('oom')) {

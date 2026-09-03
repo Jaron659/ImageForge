@@ -3,6 +3,8 @@ import type { EnhancementOptions, OutputResolution } from '../../types/enhanceme
 import { RESOLUTION_SPECS } from '../../types/enhancement.types';
 import { MODEL_CONFIG } from '../../models/model-config';
 
+import { fitWithinResolution } from '../../utils/resolution.util';
+
 interface EnhancerPanelProps {
   options: EnhancementOptions;
   onChange: (opts: EnhancementOptions) => void;
@@ -25,20 +27,17 @@ const EnhancerPanel: React.FC<EnhancerPanelProps> = ({
 
   const spec = RESOLUTION_SPECS[options.targetResolution];
 
-  // Compute expected output dimensions
+  // Compute expected output dimensions matching actual pipeline logic (4x upscale then fit)
   let outW: number | null = null;
   let outH: number | null = null;
   if (inputWidth && inputHeight) {
-    const scale = Math.min(spec.maxWidth / inputWidth, spec.maxHeight / inputHeight);
-    const factor = Math.max(scale, 1); // Always at least 1x via AI
-    outW = Math.round(inputWidth * factor);
-    outH = Math.round(inputHeight * factor);
-    // Clamp to spec
-    if (outW > spec.maxWidth || outH > spec.maxHeight) {
-      const s2 = Math.min(spec.maxWidth / outW, spec.maxHeight / outH);
-      outW = Math.round(outW * s2);
-      outH = Math.round(outH * s2);
-    }
+    const fitted = fitWithinResolution(
+      inputWidth * MODEL_CONFIG.UPSCALE_FACTOR,
+      inputHeight * MODEL_CONFIG.UPSCALE_FACTOR,
+      options.targetResolution
+    );
+    outW = fitted.width;
+    outH = fitted.height;
   }
 
   return (

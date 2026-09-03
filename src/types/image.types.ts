@@ -18,7 +18,6 @@ export interface ImageMetadata {
   width: number;
   height: number;
   aspectRatio: string; // e.g. "16:9"
-  dataUrl: string;
   objectUrl: string;
 }
 
@@ -27,7 +26,6 @@ export interface ProcessedImage {
   width: number;
   height: number;
   size: number; // bytes
-  dataUrl: string;
   objectUrl: string;
   format: OutputFormat;
 }
@@ -63,8 +61,14 @@ export interface CompressionResult {
   height: number;
 }
 
+export interface BinarySearchStep {
+  iteration: number;
+  quality: number;
+  sizeBytes: number;
+}
+
 export interface ValidationResult {
   valid: boolean;
   error?: string;
-  metadata?: Omit<ImageMetadata, 'dataUrl' | 'objectUrl'>;
+  metadata?: Omit<ImageMetadata, 'objectUrl'>;
 }

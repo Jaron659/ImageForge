@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
-import type { CompressionOptions, OutputFormat } from '../../types/image.types';
-import type { BinarySearchStep } from '../../pages/Home/Home';
+import type { BinarySearchStep, CompressionOptions, OutputFormat } from '../../types/image.types';
 
 interface CompressorPanelProps {
   options: CompressionOptions;

@@ -1,6 +1,5 @@
 import type { SupportedFormat, ValidationResult } from '../types/image.types';
 import { computeAspectRatio } from '../utils/format.util';
-import { loadImageElement } from '../utils/image.util';
 
 const SUPPORTED_FORMATS: SupportedFormat[] = [
   'image/jpeg',

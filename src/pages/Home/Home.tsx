@@ -1,5 +1,4 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import JSZip from 'jszip';
 import Header from '../../components/Header';
 import ImageUploader from '../../components/ImageUploader';
 import ImagePreview from '../../components/ImagePreview';
@@ -11,23 +10,22 @@ import BeforeAfterSlider from '../../components/BeforeAfterSlider';
 import ResultCard from '../../components/ResultCard';
 import DownloadButton from '../../components/DownloadButton';
 
-import type { BatchImageItem, CompressionOptions, ImageMetadata, ProcessedImage } from '../../types/image.types';
+import type {
+  BatchImageItem,
+  BinarySearchStep,
+  CompressionOptions,
+  ImageMetadata,
+  ProcessedImage,
+} from '../../types/image.types';
 import type { EnhancementOptions } from '../../types/enhancement.types';
 import { imageValidatorService, LARGE_IMAGE_MP_THRESHOLD } from '../../services/image-validator.service';
 import { imageCompressorService } from '../../services/image-compressor.service';
 import { upscalerService } from '../../services/upscaler.service';
 import { fitWithinResolution } from '../../utils/resolution.util';
-import { formatFileSize, bytesToKB } from '../../utils/file-size.util';
+import { formatFileSize } from '../../utils/file-size.util';
 import { buildOutputFilename, mimeToExtension } from '../../utils/format.util';
-import { blobToDataUrl, safeRevokeObjectUrl } from '../../utils/image.util';
+import { safeRevokeObjectUrl } from '../../utils/image.util';
 import { MODEL_CONFIG } from '../../models/model-config';
-
-// ─── Types ─────────────────────────────────────────────────────────────────────
-export interface BinarySearchStep {
-  iteration: number;
-  quality: number;
-  sizeBytes: number;
-}
 
 // ─── Default options ──────────────────────────────────────────────────────────
 const DEFAULT_COMPRESSION: CompressionOptions = {
@@ -58,7 +56,6 @@ const Home: React.FC = () => {
   const [warning, setWarning] = useState<string | null>(null);
   const [showComparison, setShowComparison] = useState(false);
   const [binarySearchSteps, setBinarySearchSteps] = useState<BinarySearchStep[]>([]);
-  const [overallBatchProgress, setOverallBatchProgress] = useState(0);
   const [batchStats, setBatchStats] = useState<{ totalBefore: number; totalAfter: number } | null>(null);
 
   const abortRef = useRef<AbortController | null>(null);
@@ -103,11 +100,9 @@ const Home: React.FC = () => {
         }
 
         const objectUrl = URL.createObjectURL(file);
-        const dataUrl = await blobToDataUrl(file);
 
         const metadata: ImageMetadata = {
           ...validation.metadata,
-          dataUrl,
           objectUrl,
         };
 
@@ -191,7 +186,6 @@ const Home: React.FC = () => {
           if (signal.aborted) throw new DOMException('Cancelled', 'AbortError');
 
           const blob = result.blob;
-          const dataUrl = await blobToDataUrl(blob);
           const objectUrl = URL.createObjectURL(blob);
 
           return {
@@ -199,7 +193,6 @@ const Home: React.FC = () => {
             width: result.width,
             height: result.height,
             size: blob.size,
-            dataUrl,
             objectUrl,
             format: compressionOptions.outputFormat,
           };
@@ -236,7 +229,6 @@ const Home: React.FC = () => {
 
         // ── Compress after enhance ──────────────────────────────────────
         if (pipeline === 'enhance-then-compress' && enhancementOptions.compress) {
-          const enhDataUrl = await blobToDataUrl(finalBlob);
           const enhObjUrl = URL.createObjectURL(finalBlob);
 
           const steps: BinarySearchStep[] = [];
@@ -264,10 +256,8 @@ const Home: React.FC = () => {
           finalBlob = compResult.blob;
           finalW = compResult.width;
           finalH = compResult.height;
-          void enhDataUrl;
         }
 
-        const dataUrl = await blobToDataUrl(finalBlob);
         const objectUrl = URL.createObjectURL(finalBlob);
 
         return {
@@ -275,7 +265,6 @@ const Home: React.FC = () => {
           width: finalW,
           height: finalH,
           size: finalBlob.size,
-          dataUrl,
           objectUrl,
           format: fmt,
         };
@@ -374,8 +363,6 @@ const Home: React.FC = () => {
             b.id === item.id ? { ...b, status: 'done', result, progress: 100 } : b
           )
         );
-
-        setOverallBatchProgress(((i + 1) / validItems.length) * 100);
       } catch (e) {
         const errMsg = (e as Error).message;
         const isCancelled = errMsg.includes('Cancel') || (e instanceof DOMException && e.name === 'AbortError');
@@ -439,6 +426,8 @@ const Home: React.FC = () => {
     const doneItems = batch.filter((b) => b.status === 'done' && b.result);
     if (doneItems.length === 0) throw new Error('No processed images available to download.');
 
+    // Lazy-load JSZip only when needed — keeps it out of the initial bundle
+    const { default: JSZip } = await import('jszip');
     const zip = new JSZip();
 
     for (const item of doneItems) {
@@ -746,6 +735,3 @@ const Home: React.FC = () => {
 };
 
 export default Home;
-
-// Unused imports suppression — bytesToKB is used by compressor service internally
-void bytesToKB;
