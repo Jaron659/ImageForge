@@ -243,6 +243,150 @@ async function selectExecutionProviders(): Promise<string[]> {
   return ['wasm'];
 }
 
+// ─── Tiled Inference ────────────────────────────────────────────────────────
+async function runTiledInference(
+  session: ort.InferenceSession,
+  inputData: Float32Array,
+  inputWidth: number,
+  inputHeight: number,
+  id: string
+): Promise<Float32Array> {
+  const upscaleFactor = MODEL_CONFIG.UPSCALE_FACTOR;
+  const outputWidth = inputWidth * upscaleFactor;
+  const outputHeight = inputHeight * upscaleFactor;
+  const outputData = new Float32Array(3 * outputWidth * outputHeight);
+
+  const tileSize = MODEL_CONFIG.TILE_SIZE;
+  const tilePad = MODEL_CONFIG.TILE_PAD;
+
+  const inputNames = session.inputNames;
+  const outputNames = session.outputNames;
+
+  if (inputNames.length === 0 || outputNames.length === 0) {
+    throw new Error('Model has no inputs or outputs. The ONNX file may be corrupt.');
+  }
+
+  const inputName = inputNames[0];
+  const outputName = outputNames[0];
+
+  const inPixelCount = inputWidth * inputHeight;
+  const outPixelCount = outputWidth * outputHeight;
+
+  // Single-pass direct inference if small enough
+  if (inputWidth <= tileSize && inputHeight <= tileSize) {
+    postProgress(id, 35, 'Running AI super-resolution inference...');
+    const inputTensor = new ort.Tensor('float32', inputData, [1, 3, inputHeight, inputWidth]);
+    const results = await session.run({ [inputName]: inputTensor });
+    const outputTensor = results[outputName] as ort.Tensor;
+    if (!outputTensor || outputTensor.type !== 'float32') {
+      throw new Error(`Unexpected model output tensor type (${outputTensor?.type}). Expected float32.`);
+    }
+    return new Float32Array(outputTensor.data as Float32Array);
+  }
+
+  // Calculate grid
+  const tilesX = Math.ceil(inputWidth / tileSize);
+  const tilesY = Math.ceil(inputHeight / tileSize);
+  const totalTiles = tilesX * tilesY;
+
+  let completedTiles = 0;
+
+  for (let ty = 0; ty < tilesY; ty++) {
+    const y0 = ty * tileSize;
+    const y1 = Math.min(inputHeight, y0 + tileSize);
+    const coreH = y1 - y0;
+
+    // Padded boundaries with clamp
+    const py0 = Math.max(0, y0 - tilePad);
+    const py1 = Math.min(inputHeight, y1 + tilePad);
+    const padH = py1 - py0;
+
+    for (let tx = 0; tx < tilesX; tx++) {
+      if (cancelled) {
+        throw new Error('AI enhancement cancelled.');
+      }
+
+      const x0 = tx * tileSize;
+      const x1 = Math.min(inputWidth, x0 + tileSize);
+      const coreW = x1 - x0;
+
+      const px0 = Math.max(0, x0 - tilePad);
+      const px1 = Math.min(inputWidth, x1 + tilePad);
+      const padW = px1 - px0;
+
+      const tilePixelCount = padW * padH;
+      const tileInputData = new Float32Array(3 * tilePixelCount);
+
+      // Extract padded tile NCHW
+      for (let row = 0; row < padH; row++) {
+        const srcY = py0 + row;
+        const srcRowOffset = srcY * inputWidth;
+        const dstRowOffset = row * padW;
+
+        for (let col = 0; col < padW; col++) {
+          const srcX = px0 + col;
+          const srcIdx = srcRowOffset + srcX;
+          const dstIdx = dstRowOffset + col;
+
+          tileInputData[dstIdx] = inputData[srcIdx];
+          tileInputData[tilePixelCount + dstIdx] = inputData[inPixelCount + srcIdx];
+          tileInputData[2 * tilePixelCount + dstIdx] = inputData[2 * inPixelCount + srcIdx];
+        }
+      }
+
+      const progressPct = 25 + Math.round((completedTiles / totalTiles) * 65);
+      postProgress(
+        id,
+        progressPct,
+        `Enhancing tile ${completedTiles + 1} of ${totalTiles}...`
+      );
+
+      const tileTensor = new ort.Tensor('float32', tileInputData, [1, 3, padH, padW]);
+      const results = await session.run({ [inputName]: tileTensor });
+
+      const tileOutputTensor = results[outputName] as ort.Tensor;
+      if (!tileOutputTensor || tileOutputTensor.type !== 'float32') {
+        throw new Error('Tile inference produced invalid tensor output.');
+      }
+
+      const tileOutData = tileOutputTensor.data as Float32Array;
+      const tileOutW = padW * upscaleFactor;
+      const tileOutH = padH * upscaleFactor;
+      const tileOutPixelCount = tileOutW * tileOutH;
+
+      // Crop offsets in tile output
+      const cropLeft = (x0 - px0) * upscaleFactor;
+      const cropTop = (y0 - py0) * upscaleFactor;
+      const cropW = coreW * upscaleFactor;
+      const cropH = coreH * upscaleFactor;
+
+      const destX0 = x0 * upscaleFactor;
+      const destY0 = y0 * upscaleFactor;
+
+      // Copy unpadded region to final destination output
+      for (let r = 0; r < cropH; r++) {
+        const srcTileY = cropTop + r;
+        const destY = destY0 + r;
+        const srcOffset = srcTileY * tileOutW;
+        const dstOffset = destY * outputWidth;
+
+        for (let c = 0; c < cropW; c++) {
+          const srcIdx = srcOffset + (cropLeft + c);
+          const dstIdx = dstOffset + (destX0 + c);
+
+          outputData[dstIdx] = tileOutData[srcIdx];
+          outputData[outPixelCount + dstIdx] = tileOutData[tileOutPixelCount + srcIdx];
+          outputData[2 * outPixelCount + dstIdx] = tileOutData[2 * tileOutPixelCount + srcIdx];
+        }
+      }
+
+      completedTiles++;
+    }
+  }
+
+  return outputData;
+}
+
 // ─── Inference ───────────────────────────────────────────────────────────────
 async function runEnhancement(request: WorkerEnhanceRequest): Promise<void> {
   const { id, inputData, inputWidth, inputHeight, modelUrl } = request;
@@ -250,7 +394,7 @@ async function runEnhancement(request: WorkerEnhanceRequest): Promise<void> {
   cancelled = false;
 
   try {
-    postProgress(id, 2, 'Initializing...');
+    postProgress(id, 2, 'Initializing AI super-resolution...');
 
     // Load or reuse session
     let session: ort.InferenceSession;
@@ -266,47 +410,26 @@ async function runEnhancement(request: WorkerEnhanceRequest): Promise<void> {
       return;
     }
 
-    postProgress(id, 30, 'Running super-resolution inference...');
-
     // Validate inputs
     if (!inputData || inputWidth <= 0 || inputHeight <= 0) {
       postError(id, `Invalid input dimensions or data: width=${inputWidth}, height=${inputHeight}`);
       return;
     }
 
-    // Build input tensor — shape [1, 3, H, W]
-    let inputTensor: ort.Tensor;
+    let outputData: Float32Array;
     try {
-      inputTensor = new ort.Tensor('float32', inputData, [1, 3, inputHeight, inputWidth]);
-    } catch (tensorErr) {
-      postError(id, tensorErr, 'Failed to create input ONNX tensor');
-      return;
-    }
-
-    // Get input name from the session
-    const inputNames = session.inputNames;
-    const outputNames = session.outputNames;
-
-    if (inputNames.length === 0 || outputNames.length === 0) {
-      postError(id, 'Model has no inputs or outputs. The ONNX file may be corrupt.');
-      return;
-    }
-
-    // Run inference
-    const feeds: Record<string, ort.Tensor> = {};
-    feeds[inputNames[0]] = inputTensor;
-
-    let results: ort.InferenceSession.OnnxValueMapType;
-    try {
-      postProgress(id, 40, 'AI inference running — this may take a moment...');
-      results = await session.run(feeds);
+      outputData = await runTiledInference(session, inputData, inputWidth, inputHeight, id);
     } catch (err) {
       cachedSession = null;
       const errMsg = (err as Error).message || String(err);
-      if (errMsg.toLowerCase().includes('out of memory') || errMsg.toLowerCase().includes('oom')) {
+      if (
+        errMsg.toLowerCase().includes('out of memory') ||
+        errMsg.toLowerCase().includes('oom') ||
+        errMsg.includes('bad_alloc')
+      ) {
         postError(
           id,
-          'Out of memory during AI inference. Try a smaller input image or switch to WASM backend.'
+          'Out of memory during AI inference. Try reducing image size or using WebGPU.'
         );
       } else {
         postError(id, err, `Inference failed: ${errMsg}`);
@@ -319,33 +442,11 @@ async function runEnhancement(request: WorkerEnhanceRequest): Promise<void> {
       return;
     }
 
-    postProgress(id, 90, 'Processing output tensor...');
-
-    const outputTensor = results[outputNames[0]] as ort.Tensor;
-    if (!outputTensor || outputTensor.type !== 'float32') {
-      postError(id, `Model produced unexpected output type (${outputTensor?.type}). Expected float32 tensor.`);
-      return;
-    }
-
-    const outputData = outputTensor.data as Float32Array;
-    const outputWidth = inputWidth * MODEL_CONFIG.UPSCALE_FACTOR;
-    const outputHeight = inputHeight * MODEL_CONFIG.UPSCALE_FACTOR;
-
-    // Validate output shape
-    const expectedElements = 3 * outputWidth * outputHeight;
-    if (outputData.length !== expectedElements) {
-      postError(
-        id,
-        `Model output shape mismatch: expected ${expectedElements} elements for ${outputWidth}×${outputHeight}, got ${outputData.length}.`
-      );
-      return;
-    }
-
     postProgress(id, 95, 'Transferring result...');
 
-    // Copy to avoid detaching the tensor's buffer
-    const outputCopy = new Float32Array(outputData);
-    postResult(id, outputCopy, outputWidth, outputHeight);
+    const outputWidth = inputWidth * MODEL_CONFIG.UPSCALE_FACTOR;
+    const outputHeight = inputHeight * MODEL_CONFIG.UPSCALE_FACTOR;
+    postResult(id, outputData, outputWidth, outputHeight);
   } catch (err) {
     postError(id, err, `Unexpected worker error: ${(err as Error).message || err}`);
   } finally {

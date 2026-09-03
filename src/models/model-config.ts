@@ -55,8 +55,23 @@ export const MODEL_CONFIG = {
   APPROX_SIZE_BYTES: 4_600_000,
 
   /**
+   * Tile size for inference to prevent std::bad_alloc OOM in WASM/GPU
+   */
+  TILE_SIZE: 256,
+
+  /**
+   * Overlap padding in pixels for tiles to prevent boundary seams
+   */
+  TILE_PAD: 16,
+
+  /**
+   * Maximum safe input dimension (width or height) before pre-scaling on Canvas
+   */
+  MAX_SAFE_INPUT_DIMENSION: 1280,
+
+  /**
    * Maximum safe input pixels for WASM backend to avoid OOM.
-   * At 4x upscale, output = 16x input pixels. Warn above this threshold.
+   * At 4x upscale, output = 16x input pixels.
    */
   MAX_SAFE_INPUT_MEGAPIXELS_WASM: 2,
 

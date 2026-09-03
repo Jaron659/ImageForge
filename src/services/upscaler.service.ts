@@ -10,6 +10,9 @@ export interface UpscalerResult {
   blob: Blob;
   outputWidth: number;
   outputHeight: number;
+  wasPreScaled?: boolean;
+  effectiveWidth?: number;
+  effectiveHeight?: number;
 }
 
 /**
@@ -73,8 +76,9 @@ export class UpscalerService {
 
     onProgress(5, 'Preparing image data...');
 
-    // Pre-process: decode image → Canvas → Float32Array NCHW
-    const inputData = await this.preprocessImage(imageUrl, metadata.width, metadata.height);
+    // Pre-process: decode image → Canvas → Float32Array NCHW (with input size guard)
+    const { data: inputData, effectiveWidth, effectiveHeight, wasPreScaled } =
+      await this.preprocessImage(imageUrl, metadata.width, metadata.height);
 
     if (signal.aborted) throw new DOMException('Cancelled after preprocessing', 'AbortError');
 
@@ -87,8 +91,8 @@ export class UpscalerService {
     const outputData = await this.runWorkerInference(
       jobId,
       inputData,
-      metadata.width,
-      metadata.height,
+      effectiveWidth,
+      effectiveHeight,
       (progress, stage) => onProgress(15 + Math.round(progress * 0.75), stage),
       signal
     );
@@ -98,8 +102,8 @@ export class UpscalerService {
     onProgress(92, 'Post-processing output...');
 
     // Post-process: NCHW Float32 → ImageData → Canvas → resize to target → Blob
-    const rawWidth = metadata.width * MODEL_CONFIG.UPSCALE_FACTOR;
-    const rawHeight = metadata.height * MODEL_CONFIG.UPSCALE_FACTOR;
+    const rawWidth = effectiveWidth * MODEL_CONFIG.UPSCALE_FACTOR;
+    const rawHeight = effectiveHeight * MODEL_CONFIG.UPSCALE_FACTOR;
 
     const blob = await this.postprocessOutput(
       outputData,
@@ -113,7 +117,14 @@ export class UpscalerService {
 
     onProgress(100, 'Done');
 
-    return { blob, outputWidth, outputHeight };
+    return {
+      blob,
+      outputWidth,
+      outputHeight,
+      wasPreScaled,
+      effectiveWidth,
+      effectiveHeight,
+    };
   }
 
   /**
@@ -141,28 +152,61 @@ export class UpscalerService {
     imageUrl: string,
     width: number,
     height: number
-  ): Promise<Float32Array> {
+  ): Promise<{
+    data: Float32Array;
+    effectiveWidth: number;
+    effectiveHeight: number;
+    wasPreScaled: boolean;
+  }> {
     return new Promise((resolve, reject) => {
       const img = new Image();
       img.onload = () => {
         try {
+          // Pre-scaling guard for images larger than safe threshold
+          let targetW = width;
+          let targetH = height;
+          const maxDim = MODEL_CONFIG.MAX_SAFE_INPUT_DIMENSION;
+
+          let wasPreScaled = false;
+          if (targetW > maxDim || targetH > maxDim) {
+            const aspect = width / height;
+            if (targetW >= targetH) {
+              targetW = maxDim;
+              targetH = Math.max(1, Math.round(maxDim / aspect));
+            } else {
+              targetH = maxDim;
+              targetW = Math.max(1, Math.round(maxDim * aspect));
+            }
+            wasPreScaled = true;
+          }
+
           const canvas = document.createElement('canvas');
-          canvas.width = width;
-          canvas.height = height;
+          canvas.width = targetW;
+          canvas.height = targetH;
           const ctx = canvas.getContext('2d');
           if (!ctx) throw new Error('Could not acquire canvas context for preprocessing.');
-          ctx.drawImage(img, 0, 0, width, height);
-          const imageData = ctx.getImageData(0, 0, width, height);
+          ctx.drawImage(img, 0, 0, targetW, targetH);
+          const imageData = ctx.getImageData(0, 0, targetW, targetH);
 
           // Convert RGBA → Float32 NCHW [1, 3, H, W] normalized to [0, 1]
-          const pixelCount = width * height;
+          const pixelCount = targetW * targetH;
           const tensor = new Float32Array(3 * pixelCount);
           for (let i = 0; i < pixelCount; i++) {
             tensor[i] = imageData.data[i * 4] / 255;
             tensor[pixelCount + i] = imageData.data[i * 4 + 1] / 255;
             tensor[2 * pixelCount + i] = imageData.data[i * 4 + 2] / 255;
           }
-          resolve(tensor);
+
+          // Clean up canvas
+          canvas.width = 0;
+          canvas.height = 0;
+
+          resolve({
+            data: tensor,
+            effectiveWidth: targetW,
+            effectiveHeight: targetH,
+            wasPreScaled,
+          });
         } catch (e) {
           reject(e);
         }

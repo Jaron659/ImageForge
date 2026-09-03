@@ -223,6 +223,12 @@ const Home: React.FC = () => {
 
         if (signal.aborted) throw new DOMException('Cancelled', 'AbortError');
 
+        if (enhResult.wasPreScaled) {
+          setWarning(
+            `Large image (${meta.width}×${meta.height}) was pre-scaled to ${enhResult.effectiveWidth}×${enhResult.effectiveHeight} before AI enhancement for safe browser memory processing.`
+          );
+        }
+
         let finalBlob = enhResult.blob;
         let finalW = outW;
         let finalH = outH;
