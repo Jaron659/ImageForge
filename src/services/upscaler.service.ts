@@ -27,6 +27,20 @@ export class UpscalerService {
         new URL('../workers/upscaler.worker.ts', import.meta.url),
         { type: 'module' }
       );
+
+      this.worker.onerror = (evt: ErrorEvent) => {
+        console.error('[UpscalerService Worker onerror]', {
+          message: evt.message,
+          filename: evt.filename,
+          lineno: evt.lineno,
+          colno: evt.colno,
+          error: evt.error,
+        });
+      };
+
+      this.worker.onmessageerror = (evt: MessageEvent) => {
+        console.error('[UpscalerService Worker onmessageerror]', evt);
+      };
     }
     return this.worker;
   }
@@ -172,6 +186,7 @@ export class UpscalerService {
       const cleanup = () => {
         worker.removeEventListener('message', onMessage);
         worker.removeEventListener('error', onError);
+        worker.removeEventListener('messageerror', onMessageError);
       };
 
       const onAbort = () => {
@@ -184,7 +199,8 @@ export class UpscalerService {
 
       const onMessage = (evt: MessageEvent<WorkerOutgoingMessage>) => {
         const msg = evt.data;
-        if (msg.id !== jobId) return;
+        if (!msg) return;
+        if (msg.id && msg.id !== jobId) return;
 
         switch (msg.type) {
           case 'ENHANCE_PROGRESS':
@@ -195,26 +211,48 @@ export class UpscalerService {
             cleanup();
             resolve(msg.outputData);
             break;
-          case 'ENHANCE_ERROR':
+          case 'ENHANCE_ERROR': {
             signal.removeEventListener('abort', onAbort);
             cleanup();
-            reject(new Error(msg.error));
+            const err = new Error(msg.error || 'Unknown AI worker error occurred.');
+            if (msg.name) err.name = msg.name;
+            if (msg.stack) err.stack = msg.stack;
+            reject(err);
             break;
+          }
         }
       };
 
       const onError = (evt: ErrorEvent) => {
         signal.removeEventListener('abort', onAbort);
         cleanup();
-        reject(
-          new Error(
-            `Worker error: ${evt.message}. This may indicate the ONNX model file is missing or corrupt. Check that public/models/realesr-general-x4v3.onnx exists.`
-          )
-        );
+        console.error('[UpscalerService runWorkerInference error event]', {
+          message: evt.message,
+          filename: evt.filename,
+          lineno: evt.lineno,
+          colno: evt.colno,
+          error: evt.error,
+        });
+        const realMessage =
+          evt.message?.trim() ||
+          evt.error?.message?.trim() ||
+          (typeof evt.error === 'string' ? evt.error : '');
+        const errorMessage = realMessage
+          ? `Worker error: ${realMessage}`
+          : 'Worker error occurred (details unavailable). This may indicate the ONNX model file is missing or corrupt. Check that public/models/realesr-general-x4v3.onnx exists.';
+        reject(new Error(errorMessage));
+      };
+
+      const onMessageError = (evt: MessageEvent) => {
+        signal.removeEventListener('abort', onAbort);
+        cleanup();
+        console.error('[UpscalerService runWorkerInference messageerror event]', evt);
+        reject(new Error('Worker message communication failed.'));
       };
 
       worker.addEventListener('message', onMessage);
       worker.addEventListener('error', onError);
+      worker.addEventListener('messageerror', onMessageError);
 
       const request: WorkerEnhanceRequest = {
         type: 'ENHANCE_REQUEST',

@@ -55,8 +55,10 @@ export interface WorkerResultEvent {
 
 export interface WorkerErrorEvent {
   type: 'ENHANCE_ERROR';
-  id: string;
+  id?: string;
   error: string;
+  name?: string;
+  stack?: string;
 }
 
 export interface WorkerCancelEvent {
