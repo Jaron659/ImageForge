@@ -8,6 +8,15 @@ interface CompressorPanelProps {
   originalSize?: number;
 }
 
+const TARGET_PRESETS = [
+  { label: '20 KB', value: 20 },
+  { label: '50 KB', value: 50 },
+  { label: '100 KB', value: 100 },
+  { label: '250 KB', value: 250 },
+  { label: '500 KB', value: 500 },
+  { label: '1 MB', value: 1000 },
+];
+
 const CompressorPanel: React.FC<CompressorPanelProps> = ({
   options,
   onChange,
@@ -79,22 +88,45 @@ const CompressorPanel: React.FC<CompressorPanelProps> = ({
         {options.mode === 'target-size' && (
           <div className="field">
             <label className="field__label" htmlFor="target-size-input">
-              Target Size (KB)
+              Target Max Size (KB)
             </label>
-            <input
-              id="target-size-input"
-              type="number"
-              min="10"
-              max="10000"
-              value={options.targetSizeKB ?? 200}
-              onChange={(e) =>
-                update({ targetSizeKB: Math.max(10, parseInt(e.target.value) || 200) })
-              }
-              className="input"
-            />
+
+            {/* Quick Presets */}
+            <div className="preset-group" style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '8px' }}>
+              {TARGET_PRESETS.map((preset) => (
+                <button
+                  key={preset.value}
+                  type="button"
+                  id={`preset-${preset.value}kb`}
+                  className={`tab tab--sm${options.targetSizeKB === preset.value ? ' tab--active' : ''}`}
+                  onClick={() => update({ targetSizeKB: preset.value })}
+                >
+                  {preset.label}
+                </button>
+              ))}
+            </div>
+
+            <div className="input-with-unit" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <input
+                id="target-size-input"
+                type="number"
+                min="5"
+                max="50000"
+                value={options.targetSizeKB ?? 100}
+                onChange={(e) => {
+                  const val = parseInt(e.target.value, 10);
+                  update({ targetSizeKB: isNaN(val) ? 100 : Math.max(1, val) });
+                }}
+                className="input"
+                placeholder="e.g. 50"
+                style={{ flex: 1 }}
+              />
+              <span style={{ fontSize: '0.85rem', color: 'var(--clr-text-muted)', fontWeight: 500 }}>KB</span>
+            </div>
+
             {originalSize && (
               <p className="field__hint">
-                Original: {(originalSize / 1024).toFixed(1)} KB. Binary search finds the best quality at or under your target.
+                Original: {(originalSize / 1024).toFixed(1)} KB · Two-lever binary search optimizes quality & dimensions to guarantee ≤ {options.targetSizeKB ?? 100} KB without exceeding original.
               </p>
             )}
 
@@ -115,9 +147,9 @@ const CompressorPanel: React.FC<CompressorPanelProps> = ({
                         <span>Q: {Math.round(step.quality * 100)}%</span>
                         <span>→ {(step.sizeBytes / 1024).toFixed(1)} KB</span>
                         <span
-                          className={`step-result ${step.sizeBytes <= (options.targetSizeKB ?? 200) * 1024 ? 'step-result--ok' : 'step-result--over'}`}
+                          className={`step-result ${step.sizeBytes <= (options.targetSizeKB ?? 100) * 1024 ? 'step-result--ok' : 'step-result--over'}`}
                         >
-                          {step.sizeBytes <= (options.targetSizeKB ?? 200) * 1024 ? '✓' : '✗'}
+                          {step.sizeBytes <= (options.targetSizeKB ?? 100) * 1024 ? '✓' : '✗'}
                         </span>
                       </div>
                     ))}

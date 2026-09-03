@@ -697,6 +697,12 @@ const Home: React.FC = () => {
                   original={activeMeta}
                   result={activeResult}
                   processingType={processingType}
+                  targetSizeKB={
+                    (pipeline === 'compress-only' || pipeline === 'enhance-then-compress') &&
+                    compressionOptions.mode === 'target-size'
+                      ? compressionOptions.targetSizeKB ?? 100
+                      : undefined
+                  }
                   onDownload={handleSingleDownload}
                   onViewComparison={() => setShowComparison((s) => !s)}
                 />

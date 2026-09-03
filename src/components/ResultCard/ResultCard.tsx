@@ -7,6 +7,7 @@ interface ResultCardProps {
   original: ImageMetadata;
   result: ProcessedImage;
   processingType: 'compressed' | 'enhanced' | 'enhanced+compressed';
+  targetSizeKB?: number;
   onDownload: () => void;
   onViewComparison?: () => void;
 }
@@ -15,6 +16,7 @@ const ResultCard: React.FC<ResultCardProps> = ({
   original,
   result,
   processingType,
+  targetSizeKB,
   onDownload,
   onViewComparison,
 }) => {
@@ -59,6 +61,38 @@ const ResultCard: React.FC<ResultCardProps> = ({
           </div>
         </div>
       </div>
+
+      {targetSizeKB && (
+        <div
+          className="result-card__target-info"
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            padding: '8px 14px',
+            background: 'var(--clr-bg-surface)',
+            borderRadius: 'var(--r-md)',
+            fontSize: '0.85rem',
+            margin: '0 16px 12px',
+            border: '1px solid var(--clr-border)',
+          }}
+        >
+          <span style={{ color: 'var(--clr-text-muted)' }}>Target: ≤ {targetSizeKB} KB</span>
+          <span
+            style={{
+              fontWeight: 600,
+              color:
+                result.size <= targetSizeKB * 1024
+                  ? 'var(--clr-success, #10b981)'
+                  : 'var(--clr-warn, #f59e0b)',
+            }}
+          >
+            {result.size <= targetSizeKB * 1024
+              ? `✓ Target Met (${formatFileSize(result.size)})`
+              : `At limit (${formatFileSize(result.size)})`}
+          </span>
+        </div>
+      )}
 
       <div className="result-card__actions">
         {onViewComparison && (

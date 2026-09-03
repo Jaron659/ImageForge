@@ -60,14 +60,19 @@ export class ImageCompressorService {
       }
     } else {
       // ── Target-size mode: Two-lever optimization (Quality + Dimension Scaling) ──
-      const targetBytes = kbToBytes(options.targetSizeKB ?? 200);
+      const rawTargetBytes = kbToBytes(options.targetSizeKB ?? 200);
+      // Hard guard: Never exceed original file size unless explicit resize was requested
+      const effectiveTargetBytes =
+        !isExplicitResize && sourceFileSize && rawTargetBytes > sourceFileSize
+          ? sourceFileSize
+          : rawTargetBytes;
 
       const result = await this.compressToTargetSize(
         img,
         outWidth,
         outHeight,
         options.outputFormat,
-        targetBytes,
+        effectiveTargetBytes,
         onBinarySearchStep
       );
 
