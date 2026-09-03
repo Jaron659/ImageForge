@@ -96,57 +96,23 @@ const EnhancerPanel: React.FC<EnhancerPanelProps> = ({
           </p>
         </div>
 
-        {/* Post-compression (Only shown in standalone enhance mode) */}
+        {/* Output format (when in standalone enhance mode) */}
         {showCompressionControls && (
-          <>
-            <div className="field">
-              <label className="field__label field__label--checkbox">
-                <input
-                  type="checkbox"
-                  checked={options.compress}
-                  onChange={(e) => update({ compress: e.target.checked })}
-                  id="enhance-compress-check"
-                />
-                Compress output after enhancing
-              </label>
+          <div className="field">
+            <label className="field__label">Output Format</label>
+            <div className="tab-group">
+              {(['image/jpeg', 'image/webp'] as const).map((fmt) => (
+                <button
+                  key={fmt}
+                  id={`enhance-fmt-${fmt.replace('image/', '')}`}
+                  className={`tab${(options.outputFormat ?? 'image/jpeg') === fmt ? ' tab--active' : ''}`}
+                  onClick={() => update({ outputFormat: fmt })}
+                >
+                  {fmt.replace('image/', '').toUpperCase()}
+                </button>
+              ))}
             </div>
-
-            {options.compress && (
-              <div className="field">
-                <label className="field__label" htmlFor="enhance-quality-slider">
-                  Output Quality
-                  <span className="field__value">{Math.round((options.compressionQuality ?? 0.85) * 100)}%</span>
-                </label>
-                <input
-                  id="enhance-quality-slider"
-                  type="range"
-                  min="30"
-                  max="100"
-                  value={Math.round((options.compressionQuality ?? 0.85) * 100)}
-                  onChange={(e) => update({ compressionQuality: parseInt(e.target.value) / 100 })}
-                  className="slider"
-                />
-              </div>
-            )}
-
-            {options.compress && (
-              <div className="field">
-                <label className="field__label">Format</label>
-                <div className="tab-group">
-                  {(['image/jpeg', 'image/webp'] as const).map((fmt) => (
-                    <button
-                      key={fmt}
-                      id={`enhance-fmt-${fmt.replace('image/', '')}`}
-                      className={`tab${(options.outputFormat ?? 'image/jpeg') === fmt ? ' tab--active' : ''}`}
-                      onClick={() => update({ outputFormat: fmt })}
-                    >
-                      {fmt.replace('image/', '').toUpperCase()}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-          </>
+          </div>
         )}
       </div>
     </div>

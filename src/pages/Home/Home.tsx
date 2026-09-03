@@ -30,10 +30,11 @@ import { buildOutputFilename, mimeToExtension, computeAspectRatio } from '../../
 import { safeRevokeObjectUrl } from '../../utils/image.util';
 import { MODEL_CONFIG } from '../../models/model-config';
 
-// ─── Default options (Default to JPEG) ────────────────────────────────────────
+// ─── Default options (Default to JPEG & Target-Size) ─────────────────────────
 const DEFAULT_COMPRESSION: CompressionOptions = {
-  mode: 'quality',
+  mode: 'target-size',
   quality: 0.85,
+  targetSizeKB: 50,
   outputFormat: 'image/jpeg',
 };
 
@@ -698,9 +699,8 @@ const Home: React.FC = () => {
                   result={activeResult}
                   processingType={processingType}
                   targetSizeKB={
-                    (pipeline === 'compress-only' || pipeline === 'enhance-then-compress') &&
-                    compressionOptions.mode === 'target-size'
-                      ? compressionOptions.targetSizeKB ?? 100
+                    pipeline === 'compress-only' || pipeline === 'enhance-then-compress'
+                      ? compressionOptions.targetSizeKB ?? 50
                       : undefined
                   }
                   onDownload={handleSingleDownload}

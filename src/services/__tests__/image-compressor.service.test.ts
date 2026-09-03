@@ -280,4 +280,35 @@ describe('ImageCompressorService - Target File Size Mode', () => {
     expect(res.outputSize).toBeLessThanOrEqual(80 * 1024);
     expect(res.outputSize).toBeGreaterThan(50 * 1024);
   });
+
+  it('5 MB (4000x3000) and 2 MB (2560x1440) images with targets: 20 KB, 50 KB, 100 KB, 200 KB', async () => {
+    // 5 MB image
+    const mock5MB = { width: 4000, height: 3000 } as HTMLImageElement;
+    vi.spyOn(imageUtils, 'loadImageFromUrl').mockResolvedValue(mock5MB);
+
+    vi.spyOn(imageUtils, 'drawImageToCanvas').mockImplementation((_img, w, h) => {
+      return { width: w, height: h } as HTMLCanvasElement;
+    });
+
+    vi.spyOn(imageUtils, 'canvasToBlob').mockImplementation(async (canvas, _format, quality) => {
+      const q = quality ?? 0.85;
+      const pixels = canvas.width * canvas.height;
+      const sizeBytes = Math.round(600 + (pixels * 0.42 * Math.pow(q, 1.5)));
+      return new Blob([new Uint8Array(sizeBytes)], { type: 'image/jpeg' });
+    });
+
+    const targets = [20, 50, 100, 200];
+    for (const targetKB of targets) {
+      const res = await service.compress(
+        'blob:http://localhost/5mb',
+        4000,
+        3000,
+        { mode: 'target-size', quality: 0.85, targetSizeKB: targetKB, outputFormat: 'image/jpeg' },
+        undefined,
+        5 * 1024 * 1024
+      );
+      expect(res.outputSize).toBeLessThanOrEqual(targetKB * 1024);
+      expect(res.outputSize).toBeGreaterThan(targetKB * 1024 * 0.45);
+    }
+  });
 });

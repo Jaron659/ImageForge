@@ -12,7 +12,7 @@ const TARGET_PRESETS = [
   { label: '20 KB', value: 20 },
   { label: '50 KB', value: 50 },
   { label: '100 KB', value: 100 },
-  { label: '250 KB', value: 250 },
+  { label: '200 KB', value: 200 },
   { label: '500 KB', value: 500 },
   { label: '1 MB', value: 1000 },
 ];
@@ -26,7 +26,9 @@ const CompressorPanel: React.FC<CompressorPanelProps> = ({
   const [showSteps, setShowSteps] = useState(false);
 
   const update = (partial: Partial<CompressionOptions>) =>
-    onChange({ ...options, ...partial });
+    onChange({ ...options, mode: 'target-size', ...partial });
+
+  const currentTargetKB = options.targetSizeKB ?? 50;
 
   return (
     <div className="panel">
@@ -36,129 +38,91 @@ const CompressorPanel: React.FC<CompressorPanelProps> = ({
             <path d="M2 8H14M8 2V14M4 4L12 12M12 4L4 12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
           </svg>
         </div>
-        <h2 className="panel__title">Compress</h2>
+        <h2 className="panel__title">Target File Size</h2>
       </div>
 
       <div className="panel__body">
-        {/* Mode selector */}
+        {/* Target Size Presets & Custom Input */}
         <div className="field">
-          <label className="field__label">Mode</label>
-          <div className="tab-group">
-            <button
-              id="compress-mode-quality"
-              className={`tab${options.mode === 'quality' ? ' tab--active' : ''}`}
-              onClick={() => update({ mode: 'quality' })}
-            >
-              Quality
-            </button>
-            <button
-              id="compress-mode-target"
-              className={`tab${options.mode === 'target-size' ? ' tab--active' : ''}`}
-              onClick={() => update({ mode: 'target-size' })}
-            >
-              Target Size
-            </button>
-          </div>
-        </div>
+          <label className="field__label" htmlFor="target-size-input">
+            Target Max Size
+            <span className="field__value">{currentTargetKB} KB</span>
+          </label>
 
-        {/* Quality slider */}
-        {options.mode === 'quality' && (
-          <div className="field">
-            <label className="field__label" htmlFor="quality-slider">
-              Quality
-              <span className="field__value">{Math.round(options.quality * 100)}%</span>
-            </label>
+          {/* Quick Preset Buttons */}
+          <div
+            className="preset-group"
+            style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '10px' }}
+          >
+            {TARGET_PRESETS.map((preset) => (
+              <button
+                key={preset.value}
+                type="button"
+                id={`preset-${preset.value}kb`}
+                className={`tab tab--sm${currentTargetKB === preset.value ? ' tab--active' : ''}`}
+                onClick={() => update({ targetSizeKB: preset.value })}
+              >
+                {preset.label}
+              </button>
+            ))}
+          </div>
+
+          {/* Custom Size Input */}
+          <div className="input-with-unit" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             <input
-              id="quality-slider"
-              type="range"
-              min="1"
-              max="100"
-              value={Math.round(options.quality * 100)}
-              onChange={(e) => update({ quality: parseInt(e.target.value) / 100 })}
-              className="slider"
+              id="target-size-input"
+              type="number"
+              min="5"
+              max="50000"
+              value={currentTargetKB}
+              onChange={(e) => {
+                const val = parseInt(e.target.value, 10);
+                update({ targetSizeKB: isNaN(val) ? 50 : Math.max(1, val) });
+              }}
+              className="input"
+              placeholder="e.g. 50"
+              style={{ flex: 1 }}
             />
-            <div className="slider-labels">
-              <span>Smaller file</span>
-              <span>Better quality</span>
-            </div>
+            <span style={{ fontSize: '0.85rem', color: 'var(--clr-text-muted)', fontWeight: 600 }}>KB</span>
           </div>
-        )}
 
-        {/* Target size */}
-        {options.mode === 'target-size' && (
-          <div className="field">
-            <label className="field__label" htmlFor="target-size-input">
-              Target Max Size (KB)
-            </label>
+          {originalSize && (
+            <p className="field__hint">
+              Original size: {(originalSize / 1024).toFixed(1)} KB. The optimizer automatically adjusts compression and dimensions behind the scenes to strictly meet ≤ {currentTargetKB} KB at maximum visual quality.
+            </p>
+          )}
 
-            {/* Quick Presets */}
-            <div className="preset-group" style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '8px' }}>
-              {TARGET_PRESETS.map((preset) => (
-                <button
-                  key={preset.value}
-                  type="button"
-                  id={`preset-${preset.value}kb`}
-                  className={`tab tab--sm${options.targetSizeKB === preset.value ? ' tab--active' : ''}`}
-                  onClick={() => update({ targetSizeKB: preset.value })}
-                >
-                  {preset.label}
-                </button>
-              ))}
+          {/* Binary search step breakdown */}
+          {binarySearchSteps.length > 0 && (
+            <div className="binary-search" style={{ marginTop: '10px' }}>
+              <button
+                type="button"
+                className="binary-search__toggle"
+                onClick={() => setShowSteps((s) => !s)}
+              >
+                {showSteps ? '▲ Hide' : '▼ View'} optimization steps ({binarySearchSteps.length})
+              </button>
+              {showSteps && (
+                <div className="binary-search__steps">
+                  {binarySearchSteps.map((step, i) => (
+                    <div key={i} className="binary-search__step">
+                      <span className="step-num">#{step.iteration}</span>
+                      <span>Quality: {Math.round(step.quality * 100)}%</span>
+                      <span>→ {(step.sizeBytes / 1024).toFixed(1)} KB</span>
+                      <span
+                        className={`step-result ${
+                          step.sizeBytes <= currentTargetKB * 1024 ? 'step-result--ok' : 'step-result--over'
+                        }`}
+                      >
+                        {step.sizeBytes <= currentTargetKB * 1024 ? '✓ OK' : '✗ Over'}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
-
-            <div className="input-with-unit" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <input
-                id="target-size-input"
-                type="number"
-                min="5"
-                max="50000"
-                value={options.targetSizeKB ?? 100}
-                onChange={(e) => {
-                  const val = parseInt(e.target.value, 10);
-                  update({ targetSizeKB: isNaN(val) ? 100 : Math.max(1, val) });
-                }}
-                className="input"
-                placeholder="e.g. 50"
-                style={{ flex: 1 }}
-              />
-              <span style={{ fontSize: '0.85rem', color: 'var(--clr-text-muted)', fontWeight: 500 }}>KB</span>
-            </div>
-
-            {originalSize && (
-              <p className="field__hint">
-                Original: {(originalSize / 1024).toFixed(1)} KB · Two-lever binary search optimizes quality & dimensions to guarantee ≤ {options.targetSizeKB ?? 100} KB without exceeding original.
-              </p>
-            )}
-
-            {/* Binary search steps visualization */}
-            {binarySearchSteps.length > 0 && (
-              <div className="binary-search">
-                <button
-                  className="binary-search__toggle"
-                  onClick={() => setShowSteps((s) => !s)}
-                >
-                  {showSteps ? '▲' : '▼'} Search steps ({binarySearchSteps.length})
-                </button>
-                {showSteps && (
-                  <div className="binary-search__steps">
-                    {binarySearchSteps.map((step, i) => (
-                      <div key={i} className="binary-search__step">
-                        <span className="step-num">#{step.iteration}</span>
-                        <span>Q: {Math.round(step.quality * 100)}%</span>
-                        <span>→ {(step.sizeBytes / 1024).toFixed(1)} KB</span>
-                        <span
-                          className={`step-result ${step.sizeBytes <= (options.targetSizeKB ?? 100) * 1024 ? 'step-result--ok' : 'step-result--over'}`}
-                        >
-                          {step.sizeBytes <= (options.targetSizeKB ?? 100) * 1024 ? '✓' : '✗'}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-        )}
+          )}
+        </div>
 
         {/* Output format */}
         <div className="field">
