@@ -17,6 +17,7 @@ import type {
   BinarySearchStep,
   CompressionOptions,
   ImageMetadata,
+  OutputFormat,
   ProcessedImage,
 } from '../../types/image.types';
 import type { EnhancementOptions } from '../../types/enhancement.types';
@@ -274,17 +275,26 @@ const Home: React.FC = () => {
           enhancementOptions.targetResolution
         );
 
-        const fmt = enhancementOptions.outputFormat ?? 'image/jpeg';
-        const quality = enhancementOptions.compressionQuality ?? 0.85;
+        const outFormat: OutputFormat =
+          pipeline === 'enhance-then-compress'
+            ? compressionOptions.outputFormat
+            : (enhancementOptions.outputFormat ?? 'image/jpeg');
 
+        // Step 1: AI Upscaling at high intermediate quality
         const enhResult = await upscalerService.enhance(
           meta.objectUrl,
           { width: meta.width, height: meta.height },
           outW,
           outH,
-          fmt,
-          pipeline === 'enhance-then-compress' && enhancementOptions.compress ? quality : 0.95,
-          onProgress,
+          outFormat,
+          0.95,
+          (p, stage) => {
+            if (pipeline === 'enhance-then-compress') {
+              onProgress(Math.round(p * 0.75), stage);
+            } else {
+              onProgress(p, stage);
+            }
+          },
           signal
         );
 
@@ -300,8 +310,9 @@ const Home: React.FC = () => {
         let finalW = outW;
         let finalH = outH;
 
-        // ── Compress after enhance ──────────────────────────────────────
-        if (pipeline === 'enhance-then-compress' && enhancementOptions.compress) {
+        // Step 2: In enhance-then-compress, apply the user's exact compression settings
+        if (pipeline === 'enhance-then-compress') {
+          onProgress(78, 'Applying final compression settings...');
           const enhObjUrl = URL.createObjectURL(finalBlob);
 
           const steps: BinarySearchStep[] = [];
@@ -309,24 +320,41 @@ const Home: React.FC = () => {
             enhObjUrl,
             finalW,
             finalH,
-            {
-              ...compressionOptions,
-              outputFormat: fmt,
-              quality: quality,
-            },
+            compressionOptions,
             compressionOptions.mode === 'target-size'
               ? (iteration, q, sizeBytes) => {
                   steps.push({ iteration, quality: q, sizeBytes });
                   setBinarySearchSteps([...steps]);
+                  onProgress(
+                    78 + Math.min(20, iteration * 2),
+                    `Target size search #${iteration} — quality ${Math.round(q * 100)}%`
+                  );
                 }
-              : undefined,
-            finalBlob.size
+              : undefined
           );
 
           URL.revokeObjectURL(enhObjUrl);
 
           if (signal.aborted) throw new DOMException('Cancelled', 'AbortError');
 
+          finalBlob = compResult.blob;
+          finalW = compResult.width;
+          finalH = compResult.height;
+        } else if (pipeline === 'enhance-only' && enhancementOptions.compress) {
+          // In enhance-only with standalone post-compression checked
+          const enhObjUrl = URL.createObjectURL(finalBlob);
+          const compResult = await imageCompressorService.compress(
+            enhObjUrl,
+            finalW,
+            finalH,
+            {
+              mode: 'quality',
+              quality: enhancementOptions.compressionQuality ?? 0.85,
+              outputFormat: outFormat,
+            }
+          );
+          URL.revokeObjectURL(enhObjUrl);
+          if (signal.aborted) throw new DOMException('Cancelled', 'AbortError');
           finalBlob = compResult.blob;
           finalW = compResult.width;
           finalH = compResult.height;
@@ -340,7 +368,7 @@ const Home: React.FC = () => {
           height: finalH,
           size: finalBlob.size,
           objectUrl,
-          format: fmt,
+          format: outFormat,
         };
       }
 
@@ -768,6 +796,7 @@ const Home: React.FC = () => {
                   onChange={setEnhancementOptions}
                   inputWidth={activeMeta?.width}
                   inputHeight={activeMeta?.height}
+                  showCompressionControls={pipeline === 'enhance-only'}
                 />
               )}
 

@@ -11,6 +11,7 @@ interface EnhancerPanelProps {
   inputWidth?: number;
   inputHeight?: number;
   modelAvailable?: boolean;
+  showCompressionControls?: boolean;
 }
 
 const RESOLUTIONS: OutputResolution[] = ['480p', '720p', '1080p'];
@@ -21,6 +22,7 @@ const EnhancerPanel: React.FC<EnhancerPanelProps> = ({
   inputWidth,
   inputHeight,
   modelAvailable = true,
+  showCompressionControls = true,
 }) => {
   const update = (partial: Partial<EnhancementOptions>) =>
     onChange({ ...options, ...partial });
@@ -94,53 +96,57 @@ const EnhancerPanel: React.FC<EnhancerPanelProps> = ({
           </p>
         </div>
 
-        {/* Post-compression */}
-        <div className="field">
-          <label className="field__label field__label--checkbox">
-            <input
-              type="checkbox"
-              checked={options.compress}
-              onChange={(e) => update({ compress: e.target.checked })}
-              id="enhance-compress-check"
-            />
-            Compress output after enhancing
-          </label>
-        </div>
-
-        {options.compress && (
-          <div className="field">
-            <label className="field__label" htmlFor="enhance-quality-slider">
-              Output Quality
-              <span className="field__value">{Math.round((options.compressionQuality ?? 0.85) * 100)}%</span>
-            </label>
-            <input
-              id="enhance-quality-slider"
-              type="range"
-              min="30"
-              max="100"
-              value={Math.round((options.compressionQuality ?? 0.85) * 100)}
-              onChange={(e) => update({ compressionQuality: parseInt(e.target.value) / 100 })}
-              className="slider"
-            />
-          </div>
-        )}
-
-        {options.compress && (
-          <div className="field">
-            <label className="field__label">Format</label>
-            <div className="tab-group">
-              {(['image/jpeg', 'image/webp'] as const).map((fmt) => (
-                <button
-                  key={fmt}
-                  id={`enhance-fmt-${fmt.replace('image/', '')}`}
-                  className={`tab${(options.outputFormat ?? 'image/jpeg') === fmt ? ' tab--active' : ''}`}
-                  onClick={() => update({ outputFormat: fmt })}
-                >
-                  {fmt.replace('image/', '').toUpperCase()}
-                </button>
-              ))}
+        {/* Post-compression (Only shown in standalone enhance mode) */}
+        {showCompressionControls && (
+          <>
+            <div className="field">
+              <label className="field__label field__label--checkbox">
+                <input
+                  type="checkbox"
+                  checked={options.compress}
+                  onChange={(e) => update({ compress: e.target.checked })}
+                  id="enhance-compress-check"
+                />
+                Compress output after enhancing
+              </label>
             </div>
-          </div>
+
+            {options.compress && (
+              <div className="field">
+                <label className="field__label" htmlFor="enhance-quality-slider">
+                  Output Quality
+                  <span className="field__value">{Math.round((options.compressionQuality ?? 0.85) * 100)}%</span>
+                </label>
+                <input
+                  id="enhance-quality-slider"
+                  type="range"
+                  min="30"
+                  max="100"
+                  value={Math.round((options.compressionQuality ?? 0.85) * 100)}
+                  onChange={(e) => update({ compressionQuality: parseInt(e.target.value) / 100 })}
+                  className="slider"
+                />
+              </div>
+            )}
+
+            {options.compress && (
+              <div className="field">
+                <label className="field__label">Format</label>
+                <div className="tab-group">
+                  {(['image/jpeg', 'image/webp'] as const).map((fmt) => (
+                    <button
+                      key={fmt}
+                      id={`enhance-fmt-${fmt.replace('image/', '')}`}
+                      className={`tab${(options.outputFormat ?? 'image/jpeg') === fmt ? ' tab--active' : ''}`}
+                      onClick={() => update({ outputFormat: fmt })}
+                    >
+                      {fmt.replace('image/', '').toUpperCase()}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </>
         )}
       </div>
     </div>

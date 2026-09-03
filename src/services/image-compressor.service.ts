@@ -9,14 +9,15 @@ import type { CompressionOptions, CompressionResult, OutputFormat } from '../typ
 /**
  * Binary-search parameters for target-size mode
  */
-const BINARY_SEARCH_MAX_ITERATIONS = 20;
+const BINARY_SEARCH_MAX_ITERATIONS = 16;
 const BINARY_SEARCH_TOLERANCE_BYTES = 512; // within 512 bytes of target is acceptable
+const QUALITY_FLOOR = 0.12; // Minimum reasonable quality before scaling dimensions
 
 export class ImageCompressorService {
   /**
    * Compress an image from a canvas or image source URL.
-   * Supports quality mode and binary-search target-size mode.
-   * Guarantees output size never exceeds sourceSize unless resizing was requested.
+   * Supports quality mode and two-lever target-size mode (quality search + dimension scaling).
+   * Guarantees output size <= targetSizeKB in target-size mode.
    */
   async compress(
     sourceUrl: string,
@@ -28,24 +29,24 @@ export class ImageCompressorService {
   ): Promise<CompressionResult> {
     const img = await loadImageFromUrl(sourceUrl);
 
-    // Determine output dimensions
-    const outWidth = options.resize?.width ?? sourceWidth;
-    const outHeight = options.resize?.height ?? sourceHeight;
-    const isDimensionChanged = outWidth !== sourceWidth || outHeight !== sourceHeight;
+    // Initial target dimensions
+    let outWidth = options.resize?.width ?? sourceWidth;
+    let outHeight = options.resize?.height ?? sourceHeight;
+    const isExplicitResize = options.resize != null;
 
-    const canvas = drawImageToCanvas(img, outWidth, outHeight);
+    let canvas = drawImageToCanvas(img, outWidth, outHeight);
     const originalSize = sourceFileSize ?? (await this.estimateOriginalSize(canvas, options.outputFormat));
 
     let quality: number;
     let blob: Blob;
 
     if (options.mode === 'quality') {
-      quality = Math.max(0.01, Math.min(1.0, options.quality));
+      quality = Math.max(0.05, Math.min(1.0, options.quality));
       blob = await canvasToBlob(canvas, options.outputFormat, quality);
 
-      // Inflation guard: If re-encoding inflated the size and dimensions did not change,
-      // search down to find a quality that does not exceed original size
-      if (!isDimensionChanged && sourceFileSize && blob.size > sourceFileSize) {
+      // Inflation guard: If quality mode re-encoding inflated the size and dimensions did not change,
+      // and no enhancement took place, search down to not exceed original size
+      if (!isExplicitResize && sourceFileSize && blob.size > sourceFileSize) {
         const adjusted = await this.binarySearchQuality(
           canvas,
           options.outputFormat,
@@ -58,21 +59,22 @@ export class ImageCompressorService {
         }
       }
     } else {
-      // Target-size mode: Target cannot exceed original size unless dimensions were enlarged
-      const rawTargetBytes = kbToBytes(options.targetSizeKB ?? 200);
-      const effectiveTargetBytes =
-        !isDimensionChanged && sourceFileSize && rawTargetBytes > sourceFileSize
-          ? sourceFileSize
-          : rawTargetBytes;
+      // ── Target-size mode: Two-lever optimization (Quality + Dimension Scaling) ──
+      const targetBytes = kbToBytes(options.targetSizeKB ?? 200);
 
-      const result = await this.binarySearchQuality(
-        canvas,
+      const result = await this.compressToTargetSize(
+        img,
+        outWidth,
+        outHeight,
         options.outputFormat,
-        effectiveTargetBytes,
+        targetBytes,
         onBinarySearchStep
       );
+
       quality = result.quality;
       blob = result.blob;
+      outWidth = result.width;
+      outHeight = result.height;
     }
 
     const outputSize = blob.size;
@@ -93,8 +95,90 @@ export class ImageCompressorService {
   }
 
   /**
-   * Binary-search for the highest quality value whose encoded size <= targetBytes.
-   * Reports each step via the optional callback.
+   * Two-lever target-size compressor:
+   * Lever 1: Binary search on quality in [QUALITY_FLOOR, 0.98] at current dimensions.
+   * Lever 2: If even QUALITY_FLOOR exceeds target, downscale dimensions proportionally on Canvas
+   *          and re-run quality search.
+   */
+  private async compressToTargetSize(
+    img: HTMLImageElement,
+    initialWidth: number,
+    initialHeight: number,
+    format: OutputFormat,
+    targetBytes: number,
+    onStep?: (iteration: number, quality: number, sizeBytes: number) => void
+  ): Promise<{ quality: number; blob: Blob; width: number; height: number }> {
+    let currentWidth = initialWidth;
+    let currentHeight = initialHeight;
+    let bestResult: { quality: number; blob: Blob; width: number; height: number } | null = null;
+    let stepCount = 0;
+
+    const maxDimensionPasses = 5;
+
+    for (let pass = 0; pass < maxDimensionPasses; pass++) {
+      const canvas = drawImageToCanvas(img, currentWidth, currentHeight);
+
+      // Check max quality (0.98)
+      const maxBlob = await canvasToBlob(canvas, format, 0.98);
+      stepCount++;
+      onStep?.(stepCount, 0.98, maxBlob.size);
+
+      if (maxBlob.size <= targetBytes) {
+        return { quality: 0.98, blob: maxBlob, width: currentWidth, height: currentHeight };
+      }
+
+      // Check quality floor (0.12)
+      const minBlob = await canvasToBlob(canvas, format, QUALITY_FLOOR);
+      stepCount++;
+      onStep?.(stepCount, QUALITY_FLOOR, minBlob.size);
+
+      if (minBlob.size <= targetBytes) {
+        // Quality lever is sufficient at current dimensions!
+        const searchRes = await this.binarySearchQuality(
+          canvas,
+          format,
+          targetBytes,
+          (iter, q, sz) => {
+            stepCount++;
+            onStep?.(stepCount, q, sz);
+          }
+        );
+        return {
+          quality: searchRes.quality,
+          blob: searchRes.blob,
+          width: currentWidth,
+          height: currentHeight,
+        };
+      }
+
+      // Even at quality floor, it exceeds target -> record best-effort and pull Lever 2 (Dimension Downscale)
+      bestResult = {
+        quality: QUALITY_FLOOR,
+        blob: minBlob,
+        width: currentWidth,
+        height: currentHeight,
+      };
+
+      // Calculate next scale factor based on area ratio
+      const ratio = targetBytes / minBlob.size;
+      const scale = Math.max(0.25, Math.min(0.85, Math.sqrt(ratio) * 0.92));
+
+      const nextW = Math.max(32, Math.round(currentWidth * scale));
+      const nextH = Math.max(32, Math.round(currentHeight * scale));
+
+      if (nextW === currentWidth && nextH === currentHeight) {
+        break; // Cannot scale down further
+      }
+
+      currentWidth = nextW;
+      currentHeight = nextH;
+    }
+
+    return bestResult!;
+  }
+
+  /**
+   * Binary-search for the highest quality value in [QUALITY_FLOOR, 0.98] whose encoded size <= targetBytes.
    */
   private async binarySearchQuality(
     canvas: HTMLCanvasElement,
@@ -102,28 +186,13 @@ export class ImageCompressorService {
     targetBytes: number,
     onStep?: (iteration: number, quality: number, sizeBytes: number) => void
   ): Promise<{ quality: number; blob: Blob }> {
-    const lo = 0.05;
+    const lo = QUALITY_FLOOR;
     const hi = 0.98;
 
-    // Quick check 1: test max quality
-    const maxBlob = await canvasToBlob(canvas, format, hi);
-    if (maxBlob.size <= targetBytes) {
-      onStep?.(0, hi, maxBlob.size);
-      return { quality: hi, blob: maxBlob };
-    }
-
-    // Quick check 2: test min quality
-    const minBlob = await canvasToBlob(canvas, format, lo);
-    if (minBlob.size > targetBytes) {
-      onStep?.(0, lo, minBlob.size);
-      return { quality: lo, blob: minBlob };
-    }
-
-    // Binary search in [lo, hi]
     let searchLo = lo;
     let searchHi = hi;
     let bestQuality = lo;
-    let bestBlob = minBlob;
+    let bestBlob = await canvasToBlob(canvas, format, lo);
 
     for (let i = 0; i < BINARY_SEARCH_MAX_ITERATIONS; i++) {
       const mid = (searchLo + searchHi) / 2;
