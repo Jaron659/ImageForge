@@ -9,6 +9,8 @@ import ProgressIndicator from '../../components/ProgressIndicator';
 import BeforeAfterSlider from '../../components/BeforeAfterSlider';
 import ResultCard from '../../components/ResultCard';
 import DownloadButton from '../../components/DownloadButton';
+import CropModal from '../../components/CropModal/CropModal';
+import ResizeModal from '../../components/ResizeModal/ResizeModal';
 
 import type {
   BatchImageItem,
@@ -23,22 +25,22 @@ import { imageCompressorService } from '../../services/image-compressor.service'
 import { upscalerService } from '../../services/upscaler.service';
 import { fitWithinResolution } from '../../utils/resolution.util';
 import { formatFileSize } from '../../utils/file-size.util';
-import { buildOutputFilename, mimeToExtension } from '../../utils/format.util';
+import { buildOutputFilename, mimeToExtension, computeAspectRatio } from '../../utils/format.util';
 import { safeRevokeObjectUrl } from '../../utils/image.util';
 import { MODEL_CONFIG } from '../../models/model-config';
 
-// ─── Default options ──────────────────────────────────────────────────────────
+// ─── Default options (Default to JPEG) ────────────────────────────────────────
 const DEFAULT_COMPRESSION: CompressionOptions = {
   mode: 'quality',
   quality: 0.85,
-  outputFormat: 'image/webp',
+  outputFormat: 'image/jpeg',
 };
 
 const DEFAULT_ENHANCEMENT: EnhancementOptions = {
   targetResolution: '1080p',
   compress: true,
   compressionQuality: 0.85,
-  outputFormat: 'image/webp',
+  outputFormat: 'image/jpeg',
 };
 
 // ─── Home Component ───────────────────────────────────────────────────────────
@@ -57,6 +59,8 @@ const Home: React.FC = () => {
   const [showComparison, setShowComparison] = useState(false);
   const [binarySearchSteps, setBinarySearchSteps] = useState<BinarySearchStep[]>([]);
   const [batchStats, setBatchStats] = useState<{ totalBefore: number; totalAfter: number } | null>(null);
+  const [cropModalOpen, setCropModalOpen] = useState(false);
+  const [resizeModalOpen, setResizeModalOpen] = useState(false);
 
   const abortRef = useRef<AbortController | null>(null);
 
@@ -147,6 +151,68 @@ const Home: React.FC = () => {
     setShowComparison(false);
   }, []);
 
+  // ── Apply Crop to working image ──────────────────────────────────────────
+  const handleApplyCrop = useCallback(
+    (croppedBlob: Blob, newWidth: number, newHeight: number) => {
+      if (!activeId) return;
+      const newUrl = URL.createObjectURL(croppedBlob);
+      setBatch((prev) =>
+        prev.map((item) => {
+          if (item.id !== activeId || !item.metadata) return item;
+          safeRevokeObjectUrl(item.metadata.objectUrl);
+          safeRevokeObjectUrl(item.result?.objectUrl);
+          return {
+            ...item,
+            status: 'idle',
+            result: undefined,
+            error: undefined,
+            metadata: {
+              ...item.metadata,
+              objectUrl: newUrl,
+              width: newWidth,
+              height: newHeight,
+              size: croppedBlob.size,
+              aspectRatio: computeAspectRatio(newWidth, newHeight),
+            },
+          };
+        })
+      );
+      setShowComparison(false);
+    },
+    [activeId]
+  );
+
+  // ── Apply Resize to working image ─────────────────────────────────────────
+  const handleApplyResize = useCallback(
+    (resizedBlob: Blob, newWidth: number, newHeight: number) => {
+      if (!activeId) return;
+      const newUrl = URL.createObjectURL(resizedBlob);
+      setBatch((prev) =>
+        prev.map((item) => {
+          if (item.id !== activeId || !item.metadata) return item;
+          safeRevokeObjectUrl(item.metadata.objectUrl);
+          safeRevokeObjectUrl(item.result?.objectUrl);
+          return {
+            ...item,
+            status: 'idle',
+            result: undefined,
+            error: undefined,
+            metadata: {
+              ...item.metadata,
+              objectUrl: newUrl,
+              width: newWidth,
+              height: newHeight,
+              size: resizedBlob.size,
+              aspectRatio: computeAspectRatio(newWidth, newHeight),
+            },
+          };
+        })
+      );
+      setShowComparison(false);
+    },
+    [activeId]
+  );
+
   // ── Cancel ────────────────────────────────────────────────────────────────
   const handleCancel = useCallback(() => {
     abortRef.current?.abort();
@@ -180,7 +246,8 @@ const Home: React.FC = () => {
                     `Binary search step ${iteration} — quality ${Math.round(quality * 100)}%`
                   );
                 }
-              : undefined
+              : undefined,
+            meta.size
           );
 
           if (signal.aborted) throw new DOMException('Cancelled', 'AbortError');
@@ -207,7 +274,7 @@ const Home: React.FC = () => {
           enhancementOptions.targetResolution
         );
 
-        const fmt = enhancementOptions.outputFormat ?? 'image/webp';
+        const fmt = enhancementOptions.outputFormat ?? 'image/jpeg';
         const quality = enhancementOptions.compressionQuality ?? 0.85;
 
         const enhResult = await upscalerService.enhance(
@@ -252,7 +319,8 @@ const Home: React.FC = () => {
                   steps.push({ iteration, quality: q, sizeBytes });
                   setBinarySearchSteps([...steps]);
                 }
-              : undefined
+              : undefined,
+            finalBlob.size
           );
 
           URL.revokeObjectURL(enhObjUrl);
@@ -511,6 +579,14 @@ const Home: React.FC = () => {
                       <ImagePreview
                         metadata={item.metadata}
                         onRemove={isProcessing ? undefined : () => handleRemove(item.id)}
+                        onCrop={() => {
+                          setActiveId(item.id);
+                          setCropModalOpen(true);
+                        }}
+                        onResize={() => {
+                          setActiveId(item.id);
+                          setResizeModalOpen(true);
+                        }}
                         outputSize={item.result?.size}
                         outputWidth={item.result?.width}
                         outputHeight={item.result?.height}
@@ -639,6 +715,29 @@ const Home: React.FC = () => {
                     <span>{formatFileSize(activeMeta.size)}</span>
                     <span>{activeMeta.width} × {activeMeta.height}</span>
                   </div>
+                  <div className="preview-placeholder__tools">
+                    <button
+                      type="button"
+                      className="btn btn--sm btn--ghost"
+                      onClick={() => setCropModalOpen(true)}
+                    >
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M6.13 1L6 16a2 2 0 0 0 2 2h15" />
+                        <path d="M1 6.13L16 6a2 2 0 0 1 2 2v15" />
+                      </svg>
+                      Crop Image
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn--sm btn--ghost"
+                      onClick={() => setResizeModalOpen(true)}
+                    >
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" />
+                      </svg>
+                      Resize Pixels
+                    </button>
+                  </div>
                 </div>
               )}
             </div>
@@ -734,6 +833,26 @@ const Home: React.FC = () => {
               </div>
             </aside>
           </div>
+        )}
+
+        {/* Crop Modal */}
+        {activeMeta && (
+          <CropModal
+            image={activeMeta}
+            isOpen={cropModalOpen}
+            onClose={() => setCropModalOpen(false)}
+            onApplyCrop={handleApplyCrop}
+          />
+        )}
+
+        {/* Resize Modal */}
+        {activeMeta && (
+          <ResizeModal
+            image={activeMeta}
+            isOpen={resizeModalOpen}
+            onClose={() => setResizeModalOpen(false)}
+            onApplyResize={handleApplyResize}
+          />
         )}
       </main>
     </div>

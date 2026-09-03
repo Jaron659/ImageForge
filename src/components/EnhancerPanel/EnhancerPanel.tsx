@@ -129,11 +129,11 @@ const EnhancerPanel: React.FC<EnhancerPanelProps> = ({
           <div className="field">
             <label className="field__label">Format</label>
             <div className="tab-group">
-              {(['image/webp', 'image/jpeg'] as const).map((fmt) => (
+              {(['image/jpeg', 'image/webp'] as const).map((fmt) => (
                 <button
                   key={fmt}
                   id={`enhance-fmt-${fmt.replace('image/', '')}`}
-                  className={`tab${(options.outputFormat ?? 'image/webp') === fmt ? ' tab--active' : ''}`}
+                  className={`tab${(options.outputFormat ?? 'image/jpeg') === fmt ? ' tab--active' : ''}`}
                   onClick={() => update({ outputFormat: fmt })}
                 >
                   {fmt.replace('image/', '').toUpperCase()}
