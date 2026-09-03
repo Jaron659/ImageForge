@@ -23,9 +23,16 @@ import type {
 import { MODEL_CONFIG } from '../models/model-config';
 
 // ─── Configure ONNX Runtime WASM paths ──────────────────────────────────────
-// Vite copies the onnxruntime-web wasm files to the public output directory.
-// Point the runtime to find them.
-ort.env.wasm.wasmPaths = '/';
+// Point the runtime to the served /ort-wasm/ directory where binaries are located
+ort.env.wasm.wasmPaths = '/ort-wasm/';
+
+// If SharedArrayBuffer is not available, fall back to 1 thread to prevent initWasm() failure
+if (typeof SharedArrayBuffer === 'undefined') {
+  ort.env.wasm.numThreads = 1;
+}
+
+// Since we are already running inside a dedicated Web Worker, disable proxying
+ort.env.wasm.proxy = false;
 
 // ─── Session cache ──────────────────────────────────────────────────────────
 let cachedSession: ort.InferenceSession | null = null;

@@ -1,9 +1,20 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
+import { viteStaticCopy } from 'vite-plugin-static-copy';
 
 // https://vite.dev/config/
 export default defineConfig({
-  plugins: [react()],
+  plugins: [
+    react(),
+    viteStaticCopy({
+      targets: [
+        {
+          src: 'node_modules/onnxruntime-web/dist/ort-wasm*',
+          dest: 'ort-wasm',
+        },
+      ],
+    }),
+  ],
   resolve: {
     alias: {
       '@': new URL('./src', import.meta.url).pathname,
@@ -21,8 +32,6 @@ export default defineConfig({
       'Cross-Origin-Opener-Policy': 'same-origin',
       'Cross-Origin-Embedder-Policy': 'require-corp',
     },
-    // Per-path headers for the dev server — long-lived caching for the model file
-    // so repeat visits / hot-reloads don't re-download the 4.6 MB ONNX file
     middlewareMode: false,
   },
   preview: {
@@ -43,8 +52,4 @@ export default defineConfig({
       },
     },
   },
-  // Serve the model file with long-lived cache headers
-  // NOTE: For production deployment add these headers at your CDN/server:
-  //   /models/*.onnx → Cache-Control: public, max-age=31536000, immutable
-  //   /assets/*.wasm  → Cache-Control: public, max-age=31536000, immutable
 });
